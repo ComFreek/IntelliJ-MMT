@@ -108,7 +108,7 @@ class ExtAnnotator extends ExternalAnnotator[Option[(MMT,Editor)],Option[(MMT,Ed
       }
       mmt.logged("Checking " + uri) {
           Jar.check(uri, text, clearFile, note, error)
-          mmt.errorViewer.checkBtn.setSelected(false)
+          mmt.errorViewer.deselectCheckBtn()
       }
     case _ =>
   }

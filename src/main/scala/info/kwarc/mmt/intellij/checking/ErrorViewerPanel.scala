@@ -7,28 +7,76 @@ import java.awt.event._
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.{FileEditorManager, OpenFileDescriptor}
-import com.intellij.openapi.ui.JBMenuItem
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.{JBMenuItem, Messages}
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.{PsiDocumentManager, PsiFile}
 import com.intellij.ui.treeStructure.{PatchedDefaultMutableTreeNode, Tree}
-import info.kwarc.mmt.intellij.{MMT, MMTJar}
+import info.kwarc.mmt.api.utils.File
+import info.kwarc.mmt.intellij.MMT
+import info.kwarc.mmt.intellij.mmtcontext.{ControllerSingleton, MMTJarContextProvider}
 import info.kwarc.mmt.intellij.ui.{AbstractErrorViewer, MMTToolWindow}
 import info.kwarc.mmt.utils
-import info.kwarc.mmt.utils.{File, Reflection}
-import javax.swing.{JPanel, JPopupMenu, JScrollPane, SwingUtilities}
 import javax.swing.tree.{DefaultTreeModel, TreePath}
+import javax.swing.{JPanel, JPopupMenu, JScrollPane, SwingUtilities}
 
-class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindow {
+class ErrorViewerPanelWrapper(project: Project) extends MMTToolWindow {
+  private val errorViewerInContext = MMTJarContextProvider.getProxyFor(
+    project,
+    this,
+    classOf[ErrorViewerPanelInterface],
+    classOf[ErrorViewerPanel]
+  )
+
+  def getPanel: JPanel = errorViewerInContext.getPanel
+
+  val displayName: String = "Errors"
+
+  def doCheck: Boolean = errorViewerInContext.doCheck
+
+  def clearFile(file: info.kwarc.mmt.utils.File) = {
+    errorViewerInContext.clearFile(file.toJava)
+  }
+
+  def addError(short: String, long: List[String], psifile: PsiFile,
+               file: info.kwarc.mmt.utils.File, sr: TextRange): Unit = {
+    errorViewerInContext.addError(short, long, psifile, file.toJava, sr)
+  }
+
+  def deselectCheckBtn(): Unit = {
+    errorViewerInContext.deselectCheckBtn()
+  }
+}
+
+trait ErrorViewerPanelInterface extends ActionListener {
+  def getPanel: JPanel
+
+  def clearFile(file: java.io.File)
+
+  def addError(short: String, long: List[String], psifile: PsiFile, file: java.io.File, sr: TextRange)
+
+  def doCheck: Boolean
+
+  def deselectCheckBtn(): Unit
+}
+
+class ErrorViewerPanel extends ErrorViewerPanelInterface {
   private val aev = new AbstractErrorViewer
+
+  private val errorViewer = new ErrorViewer(ControllerSingleton.getSingletonController())
+
   private object Jar {
-    private val cls = mmtjar.reflection.getClass("info.kwarc.mmt.intellij.checking.ErrorViewer")
-    private val jarev = mmtjar.method("errorViewer",Reflection.Reflected(cls),Nil)
-    def clearFile(file : File) = jarev.method("clearFile",Reflection.unit,List(file.toString))
+    def clearFile(file: File) = errorViewer.clearFile(file.toString)
   }
 
   val checkBtn = aev.check
 
-  val panel: JPanel = aev.panel
+  override def deselectCheckBtn(): Unit = {
+    checkBtn.setSelected(false)
+  }
+
+  override def getPanel: JPanel = aev.panel
+
   val displayName: String = "Errors"
 
   val root = new PatchedDefaultMutableTreeNode("Errors")
@@ -48,7 +96,7 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
   }
   // errorTree.setFont(new Font("Dialog",Font.PLAIN,12))
 
-  def doCheck = aev.check.isSelected
+  override def doCheck = aev.check.isSelected
 
   private val mouseAdapter = new MouseAdapter {
     override def mouseClicked(e: MouseEvent): Unit = {
@@ -66,26 +114,28 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
         }
       } else if (SwingUtilities.isRightMouseButton(e)) {
         if (path != null) path.getPath.lastOption match {
-          case Some(el : PatchedDefaultMutableTreeNode) =>
+          case Some(el: PatchedDefaultMutableTreeNode) =>
             val popup = new JPopupMenu()
             object copythis extends JBMenuItem("Copy line to clipboard") with ActionListener {
               val text = el.getText
+
               override def actionPerformed(actionEvent: ActionEvent): Unit = {
                 val clipboard = java.awt.Toolkit.getDefaultToolkit.getSystemClipboard
-                clipboard.setContents(new StringSelection(text),null)
+                clipboard.setContents(new StringSelection(text), null)
               }
             }
             copythis.addActionListener(copythis)
             // val copythis = new JBMenuItem("Copy line to clipboard")
             object copyall extends JBMenuItem("Copy full error to clipboard") with ActionListener {
               val text = getNodeText(el)
+
               override def actionPerformed(actionEvent: ActionEvent): Unit = {
                 val clipboard = java.awt.Toolkit.getDefaultToolkit.getSystemClipboard
-                clipboard.setContents(new StringSelection(text),null)
+                clipboard.setContents(new StringSelection(text), null)
               }
             }
             copyall.addActionListener(copyall)
-            if (el.getChildCount==0) copyall.setEnabled(false)
+            if (el.getChildCount == 0) copyall.setEnabled(false)
             popup.add(copythis)
             popup.add(copyall)
             popup.show(errorTree, x, y)
@@ -95,12 +145,12 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
     }
   }
 
-  private def getNodeText(node : PatchedDefaultMutableTreeNode,prefix : String ="") : String = {
+  private def getNodeText(node: PatchedDefaultMutableTreeNode, prefix: String = ""): String = {
     var str = prefix + node.getText
     val enum = node.children()
     while (enum.hasMoreElements) {
       val n = enum.nextElement().asInstanceOf[PatchedDefaultMutableTreeNode]
-      str = str + "\n" + getNodeText(n,prefix + "- ")
+      str = str + "\n" + getNodeText(n, prefix + "- ")
     }
     str
   }
@@ -114,13 +164,15 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
     errorTree.revalidate()
   }
 
-  implicit def convert[A](e : java.util.Enumeration[A]): List[PatchedDefaultMutableTreeNode] = {
+  implicit def convert[A](e: java.util.Enumeration[A]): List[PatchedDefaultMutableTreeNode] = {
     var ls = Nil.asInstanceOf[List[PatchedDefaultMutableTreeNode]]
     while (e.hasMoreElements) ls ::= e.nextElement().asInstanceOf[PatchedDefaultMutableTreeNode]
     ls.reverse
   }
 
-  def clearFile(file : File) = {
+  override def clearFile(fileOldClass: java.io.File) = {
+    val file = File(fileOldClass)
+
     root.children().find(_.getUserObject == file).foreach(root.remove)
     Jar.clearFile(file)
     redraw
@@ -134,8 +186,8 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
     nt
   }
 
-  private def add(file : File,node : PatchedDefaultMutableTreeNode) = {
-    ApplicationManager.getApplication.invokeLater{ () =>
+  private def add(file: File, node: PatchedDefaultMutableTreeNode) = {
+    ApplicationManager.getApplication.invokeLater { () =>
       val top = getTop(file) /*
     (top.getLastLeaf,node) match {
       case (s : StatusLine,t : StatusLine) =>
@@ -158,17 +210,19 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
     }
   }
 
-  def status(file : File,s : String) = add(file,StatusLine(s))
+  def status(file: File, s: String) = add(file, StatusLine(s))
 
-  class ErrorLine(message : String,val textrange : TextRange,val psiFile: PsiFile) extends PatchedDefaultMutableTreeNode(message) {
-    def addLine(s : String) = add(new PatchedDefaultMutableTreeNode(s))
+  class ErrorLine(message: String, val textrange: TextRange, val psiFile: PsiFile) extends PatchedDefaultMutableTreeNode(message) {
+    def addLine(s: String) = add(new PatchedDefaultMutableTreeNode(s))
   }
-  case class StatusLine(message : String) extends PatchedDefaultMutableTreeNode(message)
 
-  def addError(short : String, long : List[String], psifile : PsiFile, file : File, sr : TextRange) = {
+  case class StatusLine(message: String) extends PatchedDefaultMutableTreeNode(message)
+
+  override def addError(short: String, long: List[String], psifile: PsiFile,
+                        file: java.io.File, sr: TextRange) = {
     //val filetop = getTop(file)
-    val entry = new ErrorLine(short.trim,sr,psifile)
-    add(file, entry)
+    val entry = new ErrorLine(short.trim, sr, psifile)
+    add(File(file), entry)
     ApplicationManager.getApplication.invokeLater { () =>
       long.reverse.foreach(s => entry.addLine(s.trim))
     }
@@ -182,7 +236,7 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
       redraw
     } else if (e.getActionCommand == "Clear All") {
       root.removeAllChildren()
-      mmtjar.clear
+      ControllerSingleton.getSingletonController().clear
       redraw
     } else if (e.getActionCommand == "Type Checking" && aev.check.isSelected) {
       MMT.getProject match {
@@ -207,10 +261,14 @@ class ErrorViewerPanel(mmtjar : MMTJar) extends ActionListener with MMTToolWindo
           val f = utils.toFile(psifile)
           val p = utils.inotifyP("building " + f.name.toString + " to OMDoc...")
           utils.background {
-            mmtjar.method("buildFile", Reflection.unit, List(f.toString))
+            ControllerSingleton.getSingletonController().build(File(f))(e => {
+              ApplicationManager.getApplication.invokeLater(() => {
+                Messages.showErrorDialog(e.toStringLong, "MMT Build File error")
+              })
+            })
           }.onComplete { _ =>
             p.expire()
-            utils.inotifyP("Done.",exp=3000)
+            utils.inotifyP("Done.", exp = 3000)
           }(scala.concurrent.ExecutionContext.global)
         /*
         utils.notifyWhileP("building " + f.name.toString + " to OMDoc...") {

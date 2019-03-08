@@ -21,7 +21,9 @@ import scala.concurrent.Future
 
 class Sidekick(mmtjar : MMTJar) extends MMTToolWindow with ActionListener with CaretListener {
   override val displayName: String = "Document Tree"
-  val panel = new JPanel
+
+  private val panel = new JPanel
+  override def getPanel = panel
 
   val cb = new JCheckBox("Navigate")
 

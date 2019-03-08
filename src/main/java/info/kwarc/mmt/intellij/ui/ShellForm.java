@@ -7,4 +7,8 @@ public class ShellForm {
     public JButton btn_run;
     public JTextArea output;
     public JPanel panel;
+
+    public JTextField getInput() {
+        return input;
+    }
 }

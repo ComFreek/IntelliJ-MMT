@@ -6,12 +6,12 @@ import javax.swing.JPanel
 import info.kwarc.mmt.utils._
 
 trait MMTToolWindow {
-  val panel : JPanel
+  def getPanel : JPanel
   val displayName : String
   def init(tw : ToolWindow) : Unit = {
-    val content = ContentFactory.SERVICE.getInstance().createContent(panel,displayName,false)
+    val content = ContentFactory.SERVICE.getInstance().createContent(getPanel,displayName,false)
     // background {
-      panel.setVisible(true)
+      getPanel.setVisible(true)
       tw.getContentManager.addContent(content)
     // }
   }

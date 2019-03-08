@@ -1,0 +1,45 @@
+Normales CL:
+- Parent:
+    - Java stdlib
+    - IntelliJ
+    - PluginClassLoader:
+        - plugin.jar
+        - URLC:
+            - mmt.jar
+Versucht Klasse A aus plugin.jar auf mmt.jar zuzugreifen schlägt linking fehl
+
+Kaputtes CL:
+- Parent:
+    - Java stdlib
+    - IntelliJ
+    - PluginClassLoader:
+        - plugin.jar
+        - URLC:
+            - plugin.jar
+            - mmt.jar
+Klasse A aus plugin.jar wird immer teil des PluginClassLoader sein, weil per default parent classloader priorität haben -> Jede referenz aus dem URLC auf die Klasse A wird auf die Klasse A vom PluginClassLoader weitergereicht
+
+PLCL:
+- Parent:
+    - Java stdlib
+    - IntelliJ
+    - PluginClassLoader:
+        - plugin.jar
+        - PLCL:
+            - plugin.jar
+            - mmt.jar
+Der PLCL hat andere prioritäten - Kindklassen gehen vor. Das heißt Referenzen aus dem PLCL auf A werden die Klasse A im Kontext des PLCLs nutzen, während Referenzen vom PluginClassLoader die Klasse A im Kontext des PluginClassLoaders nutzen. Die Klassen sind vom Namen und der Struktur gleich, aber nicht dieselben und nicht kompatibel.
+
+"Proxies" werden genutzt um Aufrufe auf die die Klasse A im PluginClassLoader nutzen auf die Klasse A im PLCL abzubilden. Dazu werden Name und die Parametertypen genutzt -> es wird strukturelle Typisierung implementiert.
+
+Normale Lösung:
+PLCL:
+- Parent:
+    - Java stdlib
+    - IntelliJ
+    - PluginClassLoader:
+        - plugin.jar
+        - URLC:
+            - plugin-helper.jar
+            - mmt.jar
+Funktioniert immer wie erwartet, aber plugin.jar muss Reflection oder Proxy nutzen um plugin-helper.jar aufzurufen.

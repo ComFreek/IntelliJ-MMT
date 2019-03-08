@@ -3,53 +3,64 @@ package info.kwarc.mmt.intellij.ui
 import java.awt.event.{ActionEvent, ActionListener}
 
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.{ToolWindow, ToolWindowFactory}
-import info.kwarc.mmt.intellij.{MMT, MMTJar}
-import info.kwarc.mmt.utils.Reflection
+import com.intellij.openapi.wm.ToolWindow
+import info.kwarc.mmt.api.frontend.ReportHandler
+import info.kwarc.mmt.intellij.mmtcontext.{ControllerSingleton, MMTJarContextProvider}
+import javax.swing.JPanel
 
-class ShellViewer(mmt : MMTJar) extends ActionListener with MMTToolWindow {
-  private val shell = new ShellForm
-  val panel = shell.panel
+class ShellViewerWrapper(project: Project) extends MMTToolWindow {
+  private val shellInContext = MMTJarContextProvider.getProxyFor(
+    project,
+    this,
+    classOf[ShellViewerInterface],
+    classOf[ShellViewer]
+  )
+
+  def getPanel: JPanel = shellInContext.getPanel
   val displayName: String = "Shell"
+
+  override def init(tw: ToolWindow): Unit = {
+    super.init(tw)
+    shellInContext.init(tw)
+  }
+}
+
+trait ShellViewerInterface {
+  def init(tw: ToolWindow): Unit
+
+  def getPanel: JPanel
+
+  def actionPerformed(e: ActionEvent): Unit
+}
+
+class ShellViewer extends ShellViewerInterface with ActionListener {
+  private val shell = new ShellForm
 
   shell.input.addActionListener(this)
   shell.btn_run.addActionListener(this)
-  /*
-  private object doLine extends Function1[String,Unit] {
-    override def apply(v1: String): Unit = shell.output.append(v1 + "\n")
+
+  private def doLine(str: String): Unit = {
+    shell.output.append(str + "\n")
   }
-  */
-  val doLine : String => Unit = s => shell.output.append(s + "\n")
+
+  override def getPanel: JPanel = shell.panel
 
   override def init(tw: ToolWindow): Unit = {
-    import Reflection._
-    super.init(tw)
-    val fun = new RFunction {
-      def apply(v1:String): Unit = doLine(v1)
-    }
-    mmt.method("shell",unit,List(fun))
+    ControllerSingleton.getSingletonController().report.addHandler(new ReportHandler("IntelliJ Shell") {
+      override def apply(ind: Int, caller: => String, group: String, msgParts: List[String]): Unit = {
+        msgParts.foreach { msg =>
+          doLine(indentString(ind) + group + ": " + msg)
+        }
+      }
+    })
+
     doLine("This is the MMT Shell")
   }
 
-  override def actionPerformed(e: ActionEvent): Unit = doAction
-
-  private def doAction: Unit = {
-    val s = shell.input.getText
+  override def actionPerformed(e: ActionEvent): Unit = {
+    val command = shell.input.getText
     shell.input.setText("")
-    mmt.handleLine(s)
+    ControllerSingleton.getSingletonController().handleLine(command)
   }
-  /*
-  override def createToolWindowContent(project: Project, toolWindow: ToolWindow): Unit = MMT.get(project) match {
-    case Some(mmt) =>
-      // LanguageConsoleBuilder.GutteredLanguageConsole
-      // val consoleView = TextConsoleBuilderFactory.getInstance().createBuilder(project).getConsole
-      val content = toolWindow.getContentManager.getFactory.createContent(shell, "MMT ShellForm", true)
-      // consoleView.createConsoleActions()
-      toolWindow.getContentManager.addContent(content)
-      toolWindow.getContentManager.setSelectedContent(content)
-      toolWindow.activate(null, false)
-    case _ =>
-  }
-  */
 }
 
